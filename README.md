@@ -1,10 +1,10 @@
+Projekti nimi:
+Job finder
+
 Osalejate nimed:
 Demjan Kipriyanov
 Vseslav Golenduhhin
 Aleksei Zassimovitc
-
-Projekti nimi:
-Job finder
 
 Projekti idee:
 Tööpakkumiste otsimine erinevatelt veebilehtedelt
