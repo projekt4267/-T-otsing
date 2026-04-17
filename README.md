@@ -1,2 +1,13 @@
-# -T-otsing
-Loome rakendust tulusamate ja sobivamate töökohtade leidmiseks. See aitab kasutajatel kiiresti töökohti leida, pakkumisi võrrelda ja valida endale sobivaimad.
+Osalejate nimed:
+Demjan Kipriyanov
+Vseslav Golenduhhin
+Aleksei Zassimovitc
+
+Projekti nimi:
+Job finder
+
+Projekti idee:
+Tööpakkumiste otsimine erinevatelt veebilehtedelt
+
+Lühikirjeldus:
+Meie programm võimaldab otsida tööpakkumisi erinevatelt veebilehtedelt. Programm kuvab töö nimetuse, asukoha, lingi tööpakkumisele ning lisainfo.
