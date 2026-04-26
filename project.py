@@ -92,10 +92,48 @@ class saits: #Класс где будет происходить поиск в�
 
         except Exception as e:
             return None
+    def CV(self, quer):
+        url = 'https://cv.ee/api/v1/vacancy-search-service/search'
+        params = {
+            'limit': 10,
+            'offset': 0,
+            'keywords[]': quer,
+            'lang': 'ru'
+        }
+        result = []  # Список для сбора вакансий
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers)
+            if response.status_code == 200:
+                data = response.json()
+                vacancies = data.get('vacancies', [])
+                
+                if not vacancies:
+                    print("На CV.ee ничего не найдено")
+                    return [] 
+
+                for v in vacancies:
+                    item = {
+                        'company': v.get('employerName'),     # Название фирмы 
+                        'salary_from': v.get('salaryFrom'),
+                        'salary_to': v.get('salaryTo'),
+                        'id': v.get('id')
+                    }
+                    result.append(item)
+                
+                return result 
+            else:
+                print(f"Ошибка CV.ee: {response.status_code}")
+                return []
+
+        except Exception as e:
+            print(f"Ошибка в методе CV: {e}")
+            return []
 
     def get_job(self, query):
         jobs = self.töökassa(query)
-
+        jobsC=self.CV(query)
+        spisok=[]
         for job in jobs:
 
             detail = self.tookassaFull(job["id"])
@@ -105,20 +143,31 @@ class saits: #Класс где будет происходить поиск в�
             company = detail.get("toopakkuja", {}).get("nimi") #получение имени работадателя
             salary_from = detail.get("tookohaAndmed", {}).get("tootasuAlates")
             salary_to = detail.get("tookohaAndmed", {}).get("tootasuKuni")
+            id = job['id']
             addresses = detail.get("aadressid", [])
             adress=None
             if addresses:
                 adress=addresses[0].get("aadressTekst")
-            spisok=[]
+        
             spisok.append({ #список
                 'company':company,
                 'salary_from':salary_from,
                 'salary_to':salary_to,
+                'id':f"https://www.tootukassa.ee/et/toopakkumised/{id}",
                 'addresses':adress
             }
             )
-            for i in spisok:
-                print(f"{i['company']},{i['addresses']}, {i['salary_from']}-{i['salary_to']}")
+            
+        for i in jobsC:
+            spisok.append({
+                'company':i['company'],
+                'salary_from':i['salary_from'],
+                'salary_to':i['salary_to'],
+                'id':f"https://cv.ee/et/vacancy/{id}",
+                'addresses':None
+            })
+        for i in spisok:
+            print(f"Фирма: {i['company']}  Город: {i['addresses']}  ЗП: {i['salary_from']}-{i['salary_to']} Ссылка: {i['id']}")
 
 test = saits()
-test.get_job('ehitaja')
+test.get_job('kokk')
