@@ -115,6 +115,7 @@ class saits: #Класс где будет происходить поиск в�
                 for v in vacancies:
                     item = {
                         'company': v.get('employerName'),     # Название фирмы 
+                        'too':v.get('positionTitle'),
                         'salary_from': v.get('salaryFrom'),
                         'salary_to': v.get('salaryTo'),
                         'id': v.get('id')
@@ -139,35 +140,32 @@ class saits: #Класс где будет происходить поиск в�
             detail = self.tookassaFull(job["id"])
             if not detail:
                 continue
-
-            company = detail.get("toopakkuja", {}).get("nimi") #получение имени работадателя
-            salary_from = detail.get("tookohaAndmed", {}).get("tootasuAlates")
-            salary_to = detail.get("tookohaAndmed", {}).get("tootasuKuni")
-            id = job['id']
             addresses = detail.get("aadressid", [])
             adress=None
             if addresses:
                 adress=addresses[0].get("aadressTekst")
-        
-            spisok.append({ #список
-                'company':company,
-                'salary_from':salary_from,
-                'salary_to':salary_to,
-                'id':f"https://www.tootukassa.ee/et/toopakkumised/{id}",
-                'addresses':adress
-            }
-            )
+            if not any(item['company'] == detail.get("toopakkuja", {}).get("nimi") for item in spisok):
+                spisok.append({ #список
+                    'company':detail.get("toopakkuja", {}).get("nimi"),
+                    'too':detail.get('nimetus',{}),
+                    'salary_from':detail.get("tookohaAndmed", {}).get("tootasuAlates"),
+                    'salary_to':detail.get("tookohaAndmed", {}).get("tootasuKuni"),
+                    'id':f"https://www.tootukassa.ee/et/toopakkumised/{job['id']}",
+                    'addresses':adress
+                }
+                )
             
         for i in jobsC:
             spisok.append({
                 'company':i['company'],
+                'too':i['too'],
                 'salary_from':i['salary_from'],
                 'salary_to':i['salary_to'],
-                'id':f"https://cv.ee/et/vacancy/{id}",
+                'id':f"https://cv.ee/et/vacancy/{i['id']}",
                 'addresses':None
             })
         for i in spisok:
-            print(f"Фирма: {i['company']}  Город: {i['addresses']}  ЗП: {i['salary_from']}-{i['salary_to']} Ссылка: {i['id']}")
+            print(f"Работа: {i['too']}   Фирма: {i['company']}  Город: {i['addresses']}  ЗП: {i['salary_from']}-{i['salary_to']} Ссылка: {i['id']}")
 
 test = saits()
 test.get_job('kokk')
