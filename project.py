@@ -1,5 +1,5 @@
 import requests
-
+import csv
 class saits: #Класс где будет происходить поиск вакансий
     def __init__(self):
         self.headers = { #нужен чтобы сайт не понял что это робот, в селф чтобы не писать кучу раз
