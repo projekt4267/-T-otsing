@@ -1,5 +1,428 @@
 import requests
 import csv
+import customtkinter as ctk
+from tkinter import ttk
+import threading
+
+# ── Подключи свой модуль ──────────────────────
+# from saits import saits
+# ─────────────────────────────────────────────
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("green")
+
+
+class JobSearchApp(ctk.CTk):
+    """
+    GUI-приложение для поиска вакансий.
+
+    Подключается к классу saits и отображает результаты
+    в таблице с фильтрацией по зарплате и городу.
+
+    Usage:
+        app = JobSearchApp(backend=saits())
+        app.mainloop()
+    """
+
+    def __init__(self, backend=None):
+        """
+        Initialize the application window.
+
+        Args:
+            backend: экземпляр класса saits. Если None,
+                     используются тестовые данные.
+        """
+        super().__init__()
+
+        self.backend = backend
+        self.all_jobs: list = []  # все найденные вакансии (до фильтрации)
+
+        self.title("Поиск вакансий")
+        self.geometry("1100x700")
+        self.minsize(800, 550)
+
+        self._build_ui()
+
+    # ──────────────────────────────────────────
+    #  Построение интерфейса
+    # ──────────────────────────────────────────
+
+    def _build_ui(self):
+        """Build and arrange all UI widgets."""
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
+
+        self._build_top_bar()
+        self._build_filter_bar()
+        self._build_table()
+        self._build_status_bar()
+
+    def _build_top_bar(self):
+        """Build the top search bar."""
+        top = ctk.CTkFrame(self, corner_radius=0, fg_color="#1a1a1a")
+        top.grid(row=0, column=0, sticky="ew")
+        top.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(
+            top, text="  Поиск вакансий",
+            font=ctk.CTkFont(size=18, weight="bold")
+        ).grid(row=0, column=0, padx=20, pady=15)
+
+        self.search_var = ctk.StringVar()
+        self.search_entry = ctk.CTkEntry(
+            top,
+            textvariable=self.search_var,
+            placeholder_text="Введите должность, например: kokk, programmeerija...",
+            height=40,
+            font=ctk.CTkFont(size=13),
+            corner_radius=8,
+        )
+        self.search_entry.grid(row=0, column=1, padx=10, pady=15, sticky="ew")
+        self.search_entry.bind("<Return>", lambda e: self._start_search())
+
+        self.search_btn = ctk.CTkButton(
+            top, text="Найти", width=110, height=40,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            corner_radius=8,
+            command=self._start_search,
+        )
+        self.search_btn.grid(row=0, column=2, padx=(0, 20), pady=15)
+
+    def _build_filter_bar(self):
+        """Build the filter controls bar."""
+        bar = ctk.CTkFrame(self, corner_radius=0, fg_color="#141414")
+        bar.grid(row=1, column=0, sticky="ew")
+        bar.grid_columnconfigure(6, weight=1)
+
+        label_font = ctk.CTkFont(size=11)
+        entry_width = 100
+
+        # ── ЗП от ──
+        ctk.CTkLabel(bar, text="ЗП от:", font=label_font, text_color="#aaa").grid(
+            row=0, column=0, padx=(16, 4), pady=10)
+        self.salary_from_var = ctk.StringVar()
+        ctk.CTkEntry(bar, textvariable=self.salary_from_var,
+                     placeholder_text="0", width=entry_width, height=32,
+                     corner_radius=6).grid(row=0, column=1, padx=4, pady=10)
+
+        # ── ЗП до ──
+        ctk.CTkLabel(bar, text="до:", font=label_font, text_color="#aaa").grid(
+            row=0, column=2, padx=4, pady=10)
+        self.salary_to_var = ctk.StringVar()
+        ctk.CTkEntry(bar, textvariable=self.salary_to_var,
+                     placeholder_text="без лимита", width=entry_width, height=32,
+                     corner_radius=6).grid(row=0, column=3, padx=4, pady=10)
+
+        # ── Город ──
+        ctk.CTkLabel(bar, text="Город:", font=label_font, text_color="#aaa").grid(
+            row=0, column=4, padx=(16, 4), pady=10)
+        self.city_var = ctk.StringVar()
+        ctk.CTkEntry(bar, textvariable=self.city_var,
+                     placeholder_text="Tallinn, Tartu...", width=140, height=32,
+                     corner_radius=6).grid(row=0, column=5, padx=4, pady=10)
+
+        # ── Кнопка фильтра ──
+        ctk.CTkButton(
+            bar, text="Применить фильтр", height=32, width=160,
+            font=ctk.CTkFont(size=12),
+            corner_radius=6,
+            command=self._apply_filters,
+        ).grid(row=0, column=6, padx=12, pady=10, sticky="w")
+
+        # ── Сброс ──
+        ctk.CTkButton(
+            bar, text="Сброс", height=32, width=80,
+            font=ctk.CTkFont(size=12),
+            fg_color="transparent", border_width=1,
+            corner_radius=6,
+            command=self._reset_filters,
+        ).grid(row=0, column=7, padx=(0, 16), pady=10)
+
+    def _build_table(self):
+        """Build the results table with scrollbars."""
+        frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#0f0f0f")
+        frame.grid(row=2, column=0, sticky="nsew")
+        frame.grid_rowconfigure(0, weight=1)
+        frame.grid_columnconfigure(0, weight=1)
+
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Jobs.Treeview",
+                        background="#181818",
+                        foreground="#e0e0e0",
+                        fieldbackground="#181818",
+                        rowheight=30,
+                        font=("Consolas", 10))
+        style.configure("Jobs.Treeview.Heading",
+                        background="#222222",
+                        foreground="#6fcf00",
+                        font=("Consolas", 10, "bold"),
+                        relief="flat")
+        style.map("Jobs.Treeview",
+                  background=[("selected", "#2a5500")],
+                  foreground=[("selected", "#ffffff")])
+
+        columns = ("too", "company", "city", "salary", "link")
+        self.tree = ttk.Treeview(frame, columns=columns,
+                                 show="headings", style="Jobs.Treeview")
+
+        self.tree.heading("too",     text="Должность")
+        self.tree.heading("company", text="Компания")
+        self.tree.heading("city",    text="Город")
+        self.tree.heading("salary",  text="Зарплата (€)")
+        self.tree.heading("link",    text="Ссылка")
+
+        self.tree.column("too",     width=250, minwidth=150)
+        self.tree.column("company", width=200, minwidth=120)
+        self.tree.column("city",    width=120, minwidth=80)
+        self.tree.column("salary",  width=130, minwidth=90)
+        self.tree.column("link",    width=350, minwidth=200)
+
+        vsb = ttk.Scrollbar(frame, orient="vertical",   command=self.tree.yview)
+        hsb = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+
+        self.tree.tag_configure("odd",  background="#181818")
+        self.tree.tag_configure("even", background="#1f1f1f")
+
+    def _build_status_bar(self):
+        """Build the bottom status bar."""
+        bar = ctk.CTkFrame(self, corner_radius=0, fg_color="#111111", height=28)
+        bar.grid(row=3, column=0, sticky="ew")
+        bar.grid_propagate(False)
+
+        self.status_var = ctk.StringVar(value="Введите запрос и нажмите «Найти»")
+        ctk.CTkLabel(bar, textvariable=self.status_var,
+                     font=ctk.CTkFont(size=11),
+                     text_color="#777777").pack(side="left", padx=12)
+
+        self.progress = ctk.CTkProgressBar(bar, width=160, height=8,
+                                           corner_radius=4)
+        self.progress.pack(side="right", padx=12, pady=8)
+        self.progress.set(0)
+
+    # ──────────────────────────────────────────
+    #  Логика поиска
+    # ──────────────────────────────────────────
+
+    def _start_search(self):
+        """Start job search in a background thread."""
+        query = self.search_var.get().strip()
+        if not query:
+            self._set_status("Введите ключевое слово")
+            return
+
+        self.search_btn.configure(state="disabled", text="Поиск...")
+        self.progress.configure(mode="indeterminate")
+        self.progress.start()
+        self._set_status(f"Ищем вакансии: «{query}»...")
+        self._clear_table()
+
+        thread = threading.Thread(target=self._fetch_jobs, args=(query,), daemon=True)
+        thread.start()
+
+    def _fetch_jobs(self, query: str):
+        """
+        Fetch jobs from backend in a separate thread.
+
+        Args:
+            query: ключевое слово для поиска
+        """
+        try:
+            if self.backend:
+                jobs = self._collect_jobs(query)
+            else:
+                jobs = self._demo_jobs(query)
+
+            self.all_jobs = jobs
+            self.after(0, self._on_results_ready)
+
+        except Exception as e:
+            self.after(0, lambda: self._set_status(f"Ошибка: {e}"))
+            self.after(0, self._search_done)
+
+    def _collect_jobs(self, query: str) -> list:
+        """
+        Collect and merge jobs from both sites via backend.
+
+        Args:
+            query: ключевое слово для поиска
+
+        Returns:
+            List of job dicts with keys:
+            too, company, addresses, salary_from, salary_to, id
+        """
+        jobs_tk = self.backend.töökassa(query)
+        jobs_cv = self.backend.CV(query)
+        spisok = []
+
+        for job in jobs_tk:
+            detail = self.backend.tookassaFull(job["id"])
+            if not detail:
+                continue
+            addresses = detail.get("aadressid", [])
+            adress = addresses[0].get("aadressTekst") if addresses else None
+            company = detail.get("toopakkuja", {}).get("nimi")
+            if not any(item["company"] == company for item in spisok):
+                spisok.append({
+                    "company":     company,
+                    "too":         detail.get("nimetus", ""),
+                    "salary_from": detail.get("tookohaAndmed", {}).get("tootasuAlates"),
+                    "salary_to":   detail.get("tookohaAndmed", {}).get("tootasuKuni"),
+                    "id":          f"https://www.tootukassa.ee/et/toopakkumised/{job['id']}",
+                    "addresses":   adress,
+                })
+
+        for i in jobs_cv:
+            spisok.append({
+                "company":     i["company"],
+                "too":         i["too"],
+                "salary_from": i["salary_from"],
+                "salary_to":   i["salary_to"],
+                "id":          f"https://cv.ee/et/vacancy/{i['id']}",
+                "addresses":   i["addresses"],
+            })
+
+        return spisok
+
+    # ──────────────────────────────────────────
+    #  Таблица и фильтры
+    # ──────────────────────────────────────────
+
+    def _on_results_ready(self):
+        """Called in main thread when search results are available."""
+        self._search_done()
+        self._apply_filters()
+
+    def _apply_filters(self):
+        """Filter self.all_jobs and redraw the table."""
+        sal_from = self._parse_int(self.salary_from_var.get())
+        sal_to   = self._parse_int(self.salary_to_var.get())
+        city     = self.city_var.get().strip().lower()
+
+        filtered = []
+        for job in self.all_jobs:
+            sf = job.get("salary_from") or 0
+            st = job.get("salary_to")   or sf
+
+            if sal_from and st < sal_from:
+                continue
+            if sal_to and sf > sal_to:
+                continue
+
+            addr = (job.get("addresses") or "").lower()
+            if city and city not in addr:
+                continue
+
+            filtered.append(job)
+
+        self._fill_table(filtered)
+        self._set_status(f"Показано: {len(filtered)} из {len(self.all_jobs)} вакансий")
+
+    def _reset_filters(self):
+        """Clear all filter fields and show all results."""
+        self.salary_from_var.set("")
+        self.salary_to_var.set("")
+        self.city_var.set("")
+        self._fill_table(self.all_jobs)
+        self._set_status(f"Показано: {len(self.all_jobs)} вакансий")
+
+    def _fill_table(self, jobs: list):
+        """
+        Populate the treeview with job data.
+
+        Args:
+            jobs: список словарей с данными вакансий
+        """
+        self._clear_table()
+        for idx, j in enumerate(jobs):
+            sal_f = j.get("salary_from")
+            sal_t = j.get("salary_to")
+            if sal_f and sal_t:
+                salary = f"{sal_f} – {sal_t}"
+            elif sal_f:
+                salary = f"от {sal_f}"
+            elif sal_t:
+                salary = f"до {sal_t}"
+            else:
+                salary = "не указана"
+
+            tag = "even" if idx % 2 == 0 else "odd"
+            self.tree.insert("", "end", tags=(tag,), values=(
+                j.get("too")       or "—",
+                j.get("company")   or "—",
+                j.get("addresses") or "—",
+                salary,
+                j.get("id")        or "—",
+            ))
+
+    def _clear_table(self):
+        """Remove all rows from the treeview."""
+        for row in self.tree.get_children():
+            self.tree.delete(row)
+
+    def _search_done(self):
+        """Re-enable search button and stop progress bar."""
+        self.search_btn.configure(state="normal", text="Найти")
+        self.progress.stop()
+        self.progress.configure(mode="determinate")
+        self.progress.set(1)
+
+    # ──────────────────────────────────────────
+    #  Утилиты
+    # ──────────────────────────────────────────
+
+    def _set_status(self, text: str):
+        """Update the status bar label."""
+        self.status_var.set(text)
+
+    @staticmethod
+    def _parse_int(value: str):
+        """
+        Safely parse a string to int.
+
+        Args:
+            value: строка для преобразования
+
+        Returns:
+            int или None если строка пустая / не число
+        """
+        try:
+            return int(value.strip())
+        except (ValueError, AttributeError):
+            return None
+
+    # ──────────────────────────────────────────
+    #  Тестовые данные (без бекенда)
+    # ──────────────────────────────────────────
+
+    @staticmethod
+    def _demo_jobs(query: str) -> list:
+        """Return sample jobs for UI testing without backend."""
+        return [
+            {"too": f"{query.capitalize()} старший",   "company": "Acme OÜ",   "addresses": "Tallinn", "salary_from": 1800, "salary_to": 2500, "id": "https://cv.ee"},
+            {"too": f"{query.capitalize()} младший",   "company": "Beta AS",    "addresses": "Tartu",   "salary_from": 1200, "salary_to": 1600, "id": "https://cv.ee"},
+            {"too": f"{query.capitalize()} специалист","company": "Gamma OÜ",   "addresses": "Pärnu",   "salary_from": 1500, "salary_to": 2000, "id": "https://tootukassa.ee"},
+            {"too": f"Старший {query}",                "company": "Delta Corp", "addresses": "Tallinn", "salary_from": 2200, "salary_to": None,  "id": "https://tootukassa.ee"},
+            {"too": f"Помощник {query}а",              "company": "Epsilon OÜ", "addresses": "Narva",   "salary_from": None, "salary_to": None,  "id": "https://cv.ee"},
+        ]
+
+
+# ──────────────────────────────────────────────
+#  Запуск
+# ──────────────────────────────────────────────
+
+if __name__ == "__main__":
+    # from saits import saits
+    # backend = saits()
+    backend = None  # убери None и раскомментируй строки выше
+
+    app = JobSearchApp(backend=backend)
+    app.mainloop()
 class saits: #Класс где будет происходить поиск вакансий
     def __init__(self):
         self.headers = { #нужен чтобы сайт не понял что это робот, в селф чтобы не писать кучу раз
