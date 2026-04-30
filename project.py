@@ -4,622 +4,216 @@ import customtkinter as ctk
 from tkinter import ttk
 import threading
 
-# ── Подключи свой модуль ──────────────────────
-# from saits import saits
-# ─────────────────────────────────────────────
-
-ctk.set_appearance_mode("dark")
-ctk.set_default_color_theme("green")
-
-
-class JobSearchApp(ctk.CTk):
-    """
-    GUI-приложение для поиска вакансий.
-
-    Подключается к классу saits и отображает результаты
-    в таблице с фильтрацией по зарплате и городу.
-
-    Usage:
-        app = JobSearchApp(backend=saits())
-        app.mainloop()
-    """
-
-    def __init__(self, backend=None):
-        """
-        Initialize the application window.
-
-        Args:
-            backend: экземпляр класса saits. Если None,
-                     используются тестовые данные.
-        """
-        super().__init__()
-
-        self.backend = backend
-        self.all_jobs: list = []  # все найденные вакансии (до фильтрации)
-
-        self.title("Поиск вакансий")
-        self.geometry("1100x700")
-        self.minsize(800, 550)
-
-        self._build_ui()
-
-    # ──────────────────────────────────────────
-    #  Построение интерфейса
-    # ──────────────────────────────────────────
-
-    def _build_ui(self):
-        """Build and arrange all UI widgets."""
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
-
-        self._build_top_bar()
-        self._build_filter_bar()
-        self._build_table()
-        self._build_status_bar()
-
-    def _build_top_bar(self):
-        """Build the top search bar."""
-        top = ctk.CTkFrame(self, corner_radius=0, fg_color="#1a1a1a")
-        top.grid(row=0, column=0, sticky="ew")
-        top.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(
-            top, text="  Поиск вакансий",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).grid(row=0, column=0, padx=20, pady=15)
-
-        self.search_var = ctk.StringVar()
-        self.search_entry = ctk.CTkEntry(
-            top,
-            textvariable=self.search_var,
-            placeholder_text="Введите должность, например: kokk, programmeerija...",
-            height=40,
-            font=ctk.CTkFont(size=13),
-            corner_radius=8,
-        )
-        self.search_entry.grid(row=0, column=1, padx=10, pady=15, sticky="ew")
-        self.search_entry.bind("<Return>", lambda e: self._start_search())
-
-        self.search_btn = ctk.CTkButton(
-            top, text="Найти", width=110, height=40,
-            font=ctk.CTkFont(size=13, weight="bold"),
-            corner_radius=8,
-            command=self._start_search,
-        )
-        self.search_btn.grid(row=0, column=2, padx=(0, 20), pady=15)
-
-    def _build_filter_bar(self):
-        """Build the filter controls bar."""
-        bar = ctk.CTkFrame(self, corner_radius=0, fg_color="#141414")
-        bar.grid(row=1, column=0, sticky="ew")
-        bar.grid_columnconfigure(6, weight=1)
-
-        label_font = ctk.CTkFont(size=11)
-        entry_width = 100
-
-        # ── ЗП от ──
-        ctk.CTkLabel(bar, text="ЗП от:", font=label_font, text_color="#aaa").grid(
-            row=0, column=0, padx=(16, 4), pady=10)
-        self.salary_from_var = ctk.StringVar()
-        ctk.CTkEntry(bar, textvariable=self.salary_from_var,
-                     placeholder_text="0", width=entry_width, height=32,
-                     corner_radius=6).grid(row=0, column=1, padx=4, pady=10)
-
-        # ── ЗП до ──
-        ctk.CTkLabel(bar, text="до:", font=label_font, text_color="#aaa").grid(
-            row=0, column=2, padx=4, pady=10)
-        self.salary_to_var = ctk.StringVar()
-        ctk.CTkEntry(bar, textvariable=self.salary_to_var,
-                     placeholder_text="без лимита", width=entry_width, height=32,
-                     corner_radius=6).grid(row=0, column=3, padx=4, pady=10)
-
-        # ── Город ──
-        ctk.CTkLabel(bar, text="Город:", font=label_font, text_color="#aaa").grid(
-            row=0, column=4, padx=(16, 4), pady=10)
-        self.city_var = ctk.StringVar()
-        ctk.CTkEntry(bar, textvariable=self.city_var,
-                     placeholder_text="Tallinn, Tartu...", width=140, height=32,
-                     corner_radius=6).grid(row=0, column=5, padx=4, pady=10)
-
-        # ── Кнопка фильтра ──
-        ctk.CTkButton(
-            bar, text="Применить фильтр", height=32, width=160,
-            font=ctk.CTkFont(size=12),
-            corner_radius=6,
-            command=self._apply_filters,
-        ).grid(row=0, column=6, padx=12, pady=10, sticky="w")
-
-        # ── Сброс ──
-        ctk.CTkButton(
-            bar, text="Сброс", height=32, width=80,
-            font=ctk.CTkFont(size=12),
-            fg_color="transparent", border_width=1,
-            corner_radius=6,
-            command=self._reset_filters,
-        ).grid(row=0, column=7, padx=(0, 16), pady=10)
-
-    def _build_table(self):
-        """Build the results table with scrollbars."""
-        frame = ctk.CTkFrame(self, corner_radius=0, fg_color="#0f0f0f")
-        frame.grid(row=2, column=0, sticky="nsew")
-        frame.grid_rowconfigure(0, weight=1)
-        frame.grid_columnconfigure(0, weight=1)
-
-        style = ttk.Style()
-        style.theme_use("clam")
-        style.configure("Jobs.Treeview",
-                        background="#181818",
-                        foreground="#e0e0e0",
-                        fieldbackground="#181818",
-                        rowheight=30,
-                        font=("Consolas", 10))
-        style.configure("Jobs.Treeview.Heading",
-                        background="#222222",
-                        foreground="#6fcf00",
-                        font=("Consolas", 10, "bold"),
-                        relief="flat")
-        style.map("Jobs.Treeview",
-                  background=[("selected", "#2a5500")],
-                  foreground=[("selected", "#ffffff")])
-
-        columns = ("too", "company", "city", "salary", "link")
-        self.tree = ttk.Treeview(frame, columns=columns,
-                                 show="headings", style="Jobs.Treeview")
-
-        self.tree.heading("too",     text="Должность")
-        self.tree.heading("company", text="Компания")
-        self.tree.heading("city",    text="Город")
-        self.tree.heading("salary",  text="Зарплата (€)")
-        self.tree.heading("link",    text="Ссылка")
-
-        self.tree.column("too",     width=250, minwidth=150)
-        self.tree.column("company", width=200, minwidth=120)
-        self.tree.column("city",    width=120, minwidth=80)
-        self.tree.column("salary",  width=130, minwidth=90)
-        self.tree.column("link",    width=350, minwidth=200)
-
-        vsb = ttk.Scrollbar(frame, orient="vertical",   command=self.tree.yview)
-        hsb = ttk.Scrollbar(frame, orient="horizontal", command=self.tree.xview)
-        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        self.tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
-        hsb.grid(row=1, column=0, sticky="ew")
-
-        self.tree.tag_configure("odd",  background="#181818")
-        self.tree.tag_configure("even", background="#1f1f1f")
-
-    def _build_status_bar(self):
-        """Build the bottom status bar."""
-        bar = ctk.CTkFrame(self, corner_radius=0, fg_color="#111111", height=28)
-        bar.grid(row=3, column=0, sticky="ew")
-        bar.grid_propagate(False)
-
-        self.status_var = ctk.StringVar(value="Введите запрос и нажмите «Найти»")
-        ctk.CTkLabel(bar, textvariable=self.status_var,
-                     font=ctk.CTkFont(size=11),
-                     text_color="#777777").pack(side="left", padx=12)
-
-        self.progress = ctk.CTkProgressBar(bar, width=160, height=8,
-                                           corner_radius=4)
-        self.progress.pack(side="right", padx=12, pady=8)
-        self.progress.set(0)
-
-    # ──────────────────────────────────────────
-    #  Логика поиска
-    # ──────────────────────────────────────────
-
-    def _start_search(self):
-        """Start job search in a background thread."""
-        query = self.search_var.get().strip()
-        if not query:
-            self._set_status("Введите ключевое слово")
-            return
-
-        self.search_btn.configure(state="disabled", text="Поиск...")
-        self.progress.configure(mode="indeterminate")
-        self.progress.start()
-        self._set_status(f"Ищем вакансии: «{query}»...")
-        self._clear_table()
-
-        thread = threading.Thread(target=self._fetch_jobs, args=(query,), daemon=True)
-        thread.start()
-
-    def _fetch_jobs(self, query: str):
-        """
-        Fetch jobs from backend in a separate thread.
-
-        Args:
-            query: ключевое слово для поиска
-        """
-        try:
-            if self.backend:
-                jobs = self._collect_jobs(query)
-            else:
-                jobs = self._demo_jobs(query)
-
-            self.all_jobs = jobs
-            self.after(0, self._on_results_ready)
-
-        except Exception as e:
-            self.after(0, lambda: self._set_status(f"Ошибка: {e}"))
-            self.after(0, self._search_done)
-
-    def _collect_jobs(self, query: str) -> list:
-        """
-        Collect and merge jobs from both sites via backend.
-
-        Args:
-            query: ключевое слово для поиска
-
-        Returns:
-            List of job dicts with keys:
-            too, company, addresses, salary_from, salary_to, id
-        """
-        jobs_tk = self.backend.töökassa(query)
-        jobs_cv = self.backend.CV(query)
-        spisok = []
-
-        for job in jobs_tk:
-            detail = self.backend.tookassaFull(job["id"])
-            if not detail:
-                continue
-            addresses = detail.get("aadressid", [])
-            adress = addresses[0].get("aadressTekst") if addresses else None
-            company = detail.get("toopakkuja", {}).get("nimi")
-            if not any(item["company"] == company for item in spisok):
-                spisok.append({
-                    "company":     company,
-                    "too":         detail.get("nimetus", ""),
-                    "salary_from": detail.get("tookohaAndmed", {}).get("tootasuAlates"),
-                    "salary_to":   detail.get("tookohaAndmed", {}).get("tootasuKuni"),
-                    "id":          f"https://www.tootukassa.ee/et/toopakkumised/{job['id']}",
-                    "addresses":   adress,
-                })
-
-        for i in jobs_cv:
-            spisok.append({
-                "company":     i["company"],
-                "too":         i["too"],
-                "salary_from": i["salary_from"],
-                "salary_to":   i["salary_to"],
-                "id":          f"https://cv.ee/et/vacancy/{i['id']}",
-                "addresses":   i["addresses"],
-            })
-
-        return spisok
-
-    # ──────────────────────────────────────────
-    #  Таблица и фильтры
-    # ──────────────────────────────────────────
-
-    def _on_results_ready(self):
-        """Called in main thread when search results are available."""
-        self._search_done()
-        self._apply_filters()
-
-    def _apply_filters(self):
-        """Filter self.all_jobs and redraw the table."""
-        sal_from = self._parse_int(self.salary_from_var.get())
-        sal_to   = self._parse_int(self.salary_to_var.get())
-        city     = self.city_var.get().strip().lower()
-
-        filtered = []
-        for job in self.all_jobs:
-            sf = job.get("salary_from") or 0
-            st = job.get("salary_to")   or sf
-
-            if sal_from and st < sal_from:
-                continue
-            if sal_to and sf > sal_to:
-                continue
-
-            addr = (job.get("addresses") or "").lower()
-            if city and city not in addr:
-                continue
-
-            filtered.append(job)
-
-        self._fill_table(filtered)
-        self._set_status(f"Показано: {len(filtered)} из {len(self.all_jobs)} вакансий")
-
-    def _reset_filters(self):
-        """Clear all filter fields and show all results."""
-        self.salary_from_var.set("")
-        self.salary_to_var.set("")
-        self.city_var.set("")
-        self._fill_table(self.all_jobs)
-        self._set_status(f"Показано: {len(self.all_jobs)} вакансий")
-
-    def _fill_table(self, jobs: list):
-        """
-        Populate the treeview with job data.
-
-        Args:
-            jobs: список словарей с данными вакансий
-        """
-        self._clear_table()
-        for idx, j in enumerate(jobs):
-            sal_f = j.get("salary_from")
-            sal_t = j.get("salary_to")
-            if sal_f and sal_t:
-                salary = f"{sal_f} – {sal_t}"
-            elif sal_f:
-                salary = f"от {sal_f}"
-            elif sal_t:
-                salary = f"до {sal_t}"
-            else:
-                salary = "не указана"
-
-            tag = "even" if idx % 2 == 0 else "odd"
-            self.tree.insert("", "end", tags=(tag,), values=(
-                j.get("too")       or "—",
-                j.get("company")   or "—",
-                j.get("addresses") or "—",
-                salary,
-                j.get("id")        or "—",
-            ))
-
-    def _clear_table(self):
-        """Remove all rows from the treeview."""
-        for row in self.tree.get_children():
-            self.tree.delete(row)
-
-    def _search_done(self):
-        """Re-enable search button and stop progress bar."""
-        self.search_btn.configure(state="normal", text="Найти")
-        self.progress.stop()
-        self.progress.configure(mode="determinate")
-        self.progress.set(1)
-
-    # ──────────────────────────────────────────
-    #  Утилиты
-    # ──────────────────────────────────────────
-
-    def _set_status(self, text: str):
-        """Update the status bar label."""
-        self.status_var.set(text)
-
-    @staticmethod
-    def _parse_int(value: str):
-        """
-        Safely parse a string to int.
-
-        Args:
-            value: строка для преобразования
-
-        Returns:
-            int или None если строка пустая / не число
-        """
-        try:
-            return int(value.strip())
-        except (ValueError, AttributeError):
-            return None
-
-    # ──────────────────────────────────────────
-    #  Тестовые данные (без бекенда)
-    # ──────────────────────────────────────────
-
-    @staticmethod
-    def _demo_jobs(query: str) -> list:
-        """Return sample jobs for UI testing without backend."""
-        return [
-            {"too": f"{query.capitalize()} старший",   "company": "Acme OÜ",   "addresses": "Tallinn", "salary_from": 1800, "salary_to": 2500, "id": "https://cv.ee"},
-            {"too": f"{query.capitalize()} младший",   "company": "Beta AS",    "addresses": "Tartu",   "salary_from": 1200, "salary_to": 1600, "id": "https://cv.ee"},
-            {"too": f"{query.capitalize()} специалист","company": "Gamma OÜ",   "addresses": "Pärnu",   "salary_from": 1500, "salary_to": 2000, "id": "https://tootukassa.ee"},
-            {"too": f"Старший {query}",                "company": "Delta Corp", "addresses": "Tallinn", "salary_from": 2200, "salary_to": None,  "id": "https://tootukassa.ee"},
-            {"too": f"Помощник {query}а",              "company": "Epsilon OÜ", "addresses": "Narva",   "salary_from": None, "salary_to": None,  "id": "https://cv.ee"},
-        ]
-
-
-# ──────────────────────────────────────────────
-#  Запуск
-# ──────────────────────────────────────────────
-
-if __name__ == "__main__":
-    # from saits import saits
-    # backend = saits()
-    backend = None  # убери None и раскомментируй строки выше
-
-    app = JobSearchApp(backend=backend)
-    app.mainloop()
-class saits: #Класс где будет происходить поиск вакансий
-    def __init__(self):
-        self.headers = { #нужен чтобы сайт не понял что это робот, в селф чтобы не писать кучу раз
+class saits: # Класс для получения данных с сайтов Tööukassa и CV.ee
+    def __init__(self): # Инициализация сессии и базовых параметров
+        self.headers = { # Заголовки для имитации браузера и корректной работы с API
             "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0",
             "Origin": "https://www.tootukassa.ee",
             "Referer": "https://www.tootukassa.ee/et/toopakkumised"
         }
-        self.towns = self.CVTown() #получаем список городов при инициализации класса, чтобы использовать его для получения информации о городе по айди вакансии на CV.ee в функции CV
-    def töökassa(self,quer): # функция для поиска айди для тоокааса
-        self.url = 'https://www.tootukassa.ee/web/graphql'
-        query = """ #поиск из GraphQL # поиск по ключевому слову, количество страниц и тд
-        query jobOfferSearch($first: Int, $cursor: Cursor, $searchInput: InputToopakkumineAvalikOtsingDTO) {
-          jobOffersQuery(first: $first, after: $cursor, searchInput: $searchInput) {
-            edges {
-              id #узнать айпи
-            }
-            pageInfo {
-              totalCount #общее количество
-            }
+        self.url_tk = 'https://www.tootukassa.ee/web/graphql' # URL для Tööukassa
+        self.towns = self.CVTown() # Получаем список городов для CV.ee, чтобы отображать их в читаемом виде
+
+    def töökassa(self, quer): # Метод для получения списка вакансий с Tööukassa по заданному запросу
+        query = """ # GraphQL запрос для поиска вакансий на Tööukassa
+        query jobOfferSearch($first: Int, $cursor: Cursor, $searchInput: InputToopakkumineAvalikOtsingDTO) { # Параметры: количество результатов, курсор для пагинации и объект с параметрами поиска
+          jobOffersQuery(first: $first, after: $cursor, searchInput: $searchInput) { # Запрос вакансий с пагинацией и поисковыми параметрами
+            edges { id } # Получаем только ID вакансий, остальные данные будем запрашивать отдельно для каждой вакансии
+            pageInfo { totalCount } # Получаем общее количество найденных вакансий для отображения пользователю
           }
         }
         """
-        variables = { #фильтрации поиска
-            "first": 10,
-            "searchInput": {
-                "otsisona": quer, #ключевое слово
-                "valdkonnad": [], #профессия
-                "asukohad": [], #место
-                "kaugtoo": 0 #удаленная работа или нет
-            }
-        }
-        payload = { #запрос
-            "operationName": "jobOfferSearch", #название запроса
-            "query": query, #сам запрос
-            "variables": variables #переменные для запроса
-        }
+        variables = { # Устанавливаем переменные для GraphQL запроса: количество результатов и параметры поиска
+            "first": 30, # Получаем первые 30 вакансий, можно увеличить при необходимости
+            "searchInput": {"otsisona": quer, "valdkonnad": [], "asukohad": [], "kaugtoo": 0} # Параметры поиска: ключевое слово, категории, локации и удаленная работа (0 - нет, 1 - да)
+        } # Формируем тело запроса с операцией, самим запросом и переменными
+        payload = {"operationName": "jobOfferSearch", "query": query, "variables": variables} # Отправляем POST запрос к API Tööukassa и обрабатываем ответ, возвращая список вакансий (только ID)
 
-        try:
-            response = requests.post(self.url, json=payload, headers=self.headers) #отправляем запрос
-            response.raise_for_status() #проверка на статус ответа
-            data = response.json() #получаем данные в формате json 
-
-            if 'errors' in data: #проверка на ошибку
-                print(f"Ошибка API: {data['errors']}") #если есть ошибка, выводим ее и возвращаем пустой список
-                return [] #возвращаем пустой список в случае ошибки
-
-            result = data['data']['jobOffersQuery'] #получаем результат из данных
-            jobs = result['edges']  #список вакансий, который мы будем возвращать
-            total = result['pageInfo']['totalCount'] #общее количество вакансий, найденных по запросу
-            return jobs #возвращаем список вакансий
-
-        except Exception as e: #проверка на ошибку
-            print(f"Ошибка подключения: {e}")
+        try: # Если запрос успешен, возвращаем список вакансий, иначе возвращаем пустой список
+            response = requests.post(self.url_tk, json=payload, headers=self.headers) # Отправляем POST запрос к API Tööukassa с заданными параметрами и заголовками
+            data = response.json() #   Преобразуем ответ в JSON формат и извлекаем из него список вакансий, возвращая его для дальнейшей обработки
+            return data.get('data', {}).get('jobOffersQuery', {}).get('edges', []) # Получаем список вакансий из ответа, если данных нет, возвращаем пустой список
+        except: # В случае ошибки (например, проблемы с сетью или API) возвращаем пустой список, чтобы приложение не падало и могло продолжать работать
             return []
-    def tookassaFull(self, job_id): #полные данные
-        query = """ #
-        query jobofferquery($id: Int!) { #поиск по айди
-          publicJobOfferQuery(jobOfferId: $id) {
-            nimetus # название 
-            toopakkuja {  #информация о работадателе
-              nimi #название работадателя
-              tutvustus #info
-            }
-            tookohaAndmed { #информация о зарплате
-              tootasuAlates #нач зп
-              tootasuKuni #конечная зп
-            }
-            aadressid { #адрес
-              aadressTekst #текст адреса
-            }
+
+    def tookassaFull(self, job_id): # Метод для получения полной информации о вакансии с Tööukassa по ее ID
+        query = """ # GraphQL запрос для получения полной информации о вакансии на Tööukassa по ее ID
+        query jobofferquery($id: Int!) { # Параметр: ID вакансии, который мы получили на предыдущем этапе
+          publicJobOfferQuery(jobOfferId: $id) { # Запрос полной информации о вакансии по ее ID
+            nimetus # Название вакансии
+            toopakkuja { nimi } # Информация о компании, которая предлагает вакансию (название)
+            tookohaAndmed { tootasuAlates tootasuKuni } # Информация о зарплате: от и до
+            aadressid { aadressTekst } # Информация об адресе работы (может быть несколько адресов, берем первый для отображения)
           }
         }
         """
-
-        payload = { #запрос
-            "operationName": "jobofferquery", #название запроса
-            "query": query, 
-            "variables": {"id": job_id} #переменные для запроса, в данном случае это айди вакансии, который мы получили на предыдущем этапе поиска
-        }
-
-        try: 
-            response = requests.post(self.url, json=payload, headers=self.headers) #отправляем запрос
-            response.raise_for_status()#проверка на статус ответа
-            data = response.json()#получаем данные в формате json
-
-            if 'errors' in data: #проверка на ошибку в данных
-                return None
-
-            return data['data']['publicJobOfferQuery'] #возвращаем полные данные о вакансии, которые мы получили из ответа
-
-        except Exception as e: #проверка на ошибку при подключении или обработке данных
+        payload = {"operationName": "jobofferquery", "query": query, "variables": {"id": job_id}} # Формируем тело запроса с операцией, самим запросом и переменными (ID вакансии)
+        try: # Отправляем POST запрос к API Tööukassa для получения полной информации о вакансии по ее ID и обрабатываем ответ, возвращая данные вакансии для дальнейшей обработки
+            response = requests.post(self.url_tk, json=payload, headers=self.headers) # Отправляем POST запрос к API Tööukassa с заданными параметрами и заголовками
+            return response.json().get('data', {}).get('publicJobOfferQuery') # Получаем данные вакансии из ответа, если данных нет, возвращаем None, чтобы приложение могло обработать это и не падало при попытке доступа к несуществующим данным
+        except: # В случае ошибки (например, проблемы с сетью или API) возвращаем None, чтобы приложение не падало и могло продолжать работать, даже если не удалось получить данные о вакансии
             return None
-    def CVTown(self): #получение информации о городе по айди вакансии на CV.ee
-        url = 'https://cv.ee/api/v1/locations-service/list' #внутренний API CV.ee для получения списка городов
-        try:
-            response = requests.get(url, headers=self.headers) #отправляем GET запрос к API CV.ee для получения списка городов с указанными заголовками
-            if response.status_code == 200:
-                data = response.json()
-                return {t['id']: t['name'] for t in data.get('towns', [])}
-        except Exception as e:
-            print(f"Ошибка подключения к CV.ee для получения городов: {e}")
-        return {}        
-    def CV(self, quer): #поиск вакансий на CV.ee
-        url ='https://cv.ee/api/v1/vacancy-search-service/search' #внутренний API CV.ee для поиска вакансий
-        params = { #параметры запроса для поиска вакансий на CV.ee
-            'limit': 10, #сколько вакансий показать
-            'offset': 0, 
-            'keywords[]': quer, #ключевое слово для поиска вакансий
-            'lang': 'ru' #язык интерфейса, в данном случае русский
-        }
-        result = []  # Список для сбора вакансий
-        
-        try:
-            response = requests.get(url, params=params, headers=self.headers) #отправляем GET запрос к API CV.ee с указанными параметрами и заголовками
-            if response.status_code == 200: #проверяем статус ответа, если он 200, значит запрос успешный
-                data = response.json() #получаем данные в формате json из ответа
-                vacancies = data.get('vacancies', []) #получаем список вакансий из данных, если ключ 'vacancies' отсутствует, возвращаем пустой список
-                
-                if not vacancies:
-                    print("На CV.ee ничего не найдено")
-                    return [] 
 
-                for v in vacancies: #проходим по каждой вакансии в списке вакансий, полученных из ответа
-                    town_id = v.get('townId') #получаем айди города из данных о вакансии, используя ключ 'townId' для доступа к информации о городе. Если ключ 'townId' отсутствует, возвращаем None.
-                    town_name = self.towns.get(town_id, "Не указан")
-                    item = { #создаем словарь для каждой вакансии, который будет содержать информацию о компании, названии работы, зарплате и ссылке на вакансию
-                        'company': v.get('employerName'),     # Название фирмы 
-                        'too':v.get('positionTitle'), #название работы
-                        'salary_from': v.get('salaryFrom'), #начальная зп
-                        'salary_to': v.get('salaryTo'), #конечная зп
-                        'id': v.get('id'),#айди для ссылки
-                        'addresses': town_name #получаем информацию о городе по айди вакансии, используя функцию CVTown, которая принимает айди вакансии и возвращает название города, где находится работа. Мы передаем айди вакансии, полученный из данных о вакансии, в функцию CVTown для получения информации о городе.
-                    }
-                    result.append(item)
-                
-                return result #возвращаем список вакансий, который мы собрали из ответа
-            else:
-                print(f"Ошибка CV.ee: {response.status_code}")
-                return []
+    def CVTown(self): # Метод для получения списка городов с CV.ee, чтобы отображать их в читаемом виде вместо ID
+        url = 'https://cv.ee/api/v1/locations-service/list' # URL для получения списка городов с CV.ee, который возвращает данные в формате JSON, содержащем массив городов с их ID и названиями
+        try: # Отправляем GET запрос к API CV.ee для получения списка городов и обрабатываем ответ, возвращая словарь с ID городов в качестве ключей и их названиями в качестве значений для удобного отображения в интерфейсе приложения
+            response = requests.get(url, headers=self.headers) # Отправляем GET запрос к API CV.ee с заданными заголовками для получения списка городов
+            if response.status_code == 200: # Если запрос успешен (статус 200), обрабатываем ответ, извлекая из него список городов и формируя словарь, который будет использоваться для отображения названий городов вместо их ID в интерфейсе приложения
+                return {t['id']: t['name'] for t in response.json().get('towns', [])} # Получаем список городов из ответа, если данных нет, возвращаем пустой словарь, чтобы приложение могло работать без информации о городах и не падало при попытке доступа к несуществующим данным
+        except: pass # В случае ошибки (например, проблемы с сетью или API) возвращаем пустой словарь, чтобы приложение не падало и могло продолжать работать, даже если не удалось получить данные о городах
+        return {}
 
-        except Exception as e:
-            print(f"Ошибка в методе CV: {e}")
-            return []
+    def CV(self, quer): # Метод для получения списка вакансий с CV.ee по заданному запросу, используя API CV.ee для поиска вакансий и обрабатывая ответ, возвращая список вакансий с информацией о компании, должности, зарплате и адресе работы для отображения в интерфейсе приложения
+        url = 'https://cv.ee/api/v1/vacancy-search-service/search' # URL для поиска вакансий с CV.ee, который принимает параметры в виде query string и возвращает данные в формате JSON, содержащем массив вакансий с их информацией (компания, должность, зарплата, адрес и т.д.)
+        params = {'limit': 30, 'keywords[]': quer, 'lang': 'ru'} # Параметры для поиска вакансий с CV.ee: количество результатов, ключевые слова для поиска и язык (русский), которые будут переданы в виде query string при отправке GET запроса к API CV.ee
+        result = [] # Список для хранения результатов поиска вакансий с CV.ee, который будет возвращен после обработки ответа от API CV.ee и может быть объединен с результатами из Tööukassa для отображения в интерфейсе приложения
+        try: # Отправляем GET запрос к API CV.ee для поиска вакансий по заданному запросу и обрабатываем ответ, извлекая из него список вакансий и формируя список словарей с информацией о каждой вакансии (компания, должность, зарплата, адрес и т.д.) для отображения в интерфейсе приложения
+            response = requests.get(url, params=params, headers=self.headers) # Отправляем GET запрос к API CV.ee с заданными параметрами и заголовками для поиска вакансий по заданному запросу
+            if response.status_code == 200: # Если запрос успешен (статус 200), обрабатываем ответ, извлекая из него список вакансий и формируя список словарей с информацией о каждой вакансии (компания, должность, зарплата, адрес и т.д.) для отображения в интерфейсе приложения
+                for v in response.json().get('vacancies', []): # Получаем список вакансий из ответа, если данных нет, возвращаем пустой список, чтобы приложение могло работать без информации о вакансиях и не падало при попытке доступа к несуществующим данным
+                    result.append({ # Формируем словарь с информацией о каждой вакансии для отображения в интерфейсе приложения, используя данные из ответа от API CV.ee и словарь городов для отображения названий городов вместо их ID
+                        'company': v.get('employerName'), # Название компании, которая предлагает вакансию, получаемое из поля 'employerName' в ответе от API CV.ee, если данных нет, возвращаем "Неизвестно" для отображения в интерфейсе приложения
+                        'too': v.get('positionTitle'), # Название должности, получаемое из поля 'positionTitle' в ответе от API CV.ee, если данных нет, возвращаем "Без названия" для отображения в интерфейсе приложения
+                        'salary_from': v.get('salaryFrom'), # Зарплата от, получаемая из поля 'salaryFrom' в ответе от API CV.ee, если данных нет, возвращаем None для отображения в интерфейсе приложения
+                        'salary_to': v.get('salaryTo'), # Зарплата до, получаемая из поля 'salaryTo' в ответе от API CV.ee, если данных нет, возвращаем None для отображения в интерфейсе приложения
+                        'id': f"https://cv.ee/et/vacancy/{v.get('id')}", # Ссылка на вакансию, формируемая на основе ID вакансии из ответа от API CV.ee, если данных нет, возвращаем None для отображения в интерфейсе приложения
+                        'addresses': self.towns.get(v.get('townId'), "Не указан") # Адрес работы, получаемый на основе ID города из ответа от API CV.ee и словаря городов, если данных нет, возвращаем "Не указан" для отображения в интерфейсе приложения
+                    })
+        except: pass # В случае ошибки (например, проблемы с сетью или API) возвращаем пустой список, чтобы приложение не падало и могло продолжать работать, даже если не удалось получить данные о вакансиях с CV.ee
+        return result
 
-    def get_job(self, query): #главная функция для получения вакансий по ключевому слову, которая объединяет результаты с обоих сайтов и выводит их в удобном формате
-        jobs = self.töökassa(query) #получаем список вакансий с сайта TööKassa по ключевому слову, используя функцию töökassa
-        jobsC=self.CV(query) #получаем список вакансий с сайта CV.ee по ключевому слову, используя функцию CV
-        spisok=[] #создаем пустой список, который будет содержать объединенные результаты вакансий с обоих сайтов, чтобы избежать дублирования и вывести их в удобном формат
-        for job in jobs: #проходим по каждой вакансии в списке вакансий, полученных с сайта TööKassa
+    def get_job_list(self, query): # Метод для получения объединенного списка вакансий с Tööukassa и CV.ee по заданному запросу, который будет использоваться в интерфейсе приложения для отображения результатов поиска вакансий, объединяя данные из обоих источников и формируя единый список вакансий с информацией о компании, должности, зарплате и адресе работы для удобного отображения в интерфейсе приложения
+        final_list = [] # Список для хранения объединенных результатов поиска вакансий с Tööukassa и CV.ee, который будет возвращен после обработки данных из обоих источников и может быть использован в интерфейсе приложения для отображения результатов поиска вакансий
+       
+        # Парсим Tööukassa
+        tk_raw = self.töökassa(query) # Получаем список вакансий с Tööukassa по заданному запросу, который содержит только ID вакансий, и для каждой вакансии запрашиваем полную информацию, формируя словарь с данными о компании, должности, зарплате и адресе работы для отображения в интерфейсе приложения
+        for item in tk_raw: # Проходим по каждому элементу в списке вакансий с Tööukassa, который содержит только ID вакансии, и для каждой вакансии запрашиваем полную информацию, формируя словарь с данными о компании, должности, зарплате и адресе работы для отображения в интерфейсе приложения
+            detail = self.tookassaFull(item['id']) # Получаем полную информацию о вакансии с Tööukassa по ее ID, который мы получили на предыдущем этапе, и формируем словарь с данными о компании, должности, зарплате и адресе работы для отображения в интерфейсе приложения
+            if detail: # Если данные о вакансии были успешно получены, формируем словарь с данными о компании, должности, зарплате и адресе работы для отображения в интерфейсе приложения, используя данные из ответа от API Tööukassa и обрабатывая возможные отсутствующие данные (например, если нет информации об адресе работы, отображаем "Не указан")
+                addr = detail.get("aadressid", [{}])[0].get("aadressTekst") if detail.get("aadressid") else "Не указан"  # Получаем адрес работы из данных вакансии, если данных нет, возвращаем "Не указан" для отображения в интерфейсе приложения
+                final_list.append({ # Формируем словарь с данными о вакансии для отображения в интерфейсе приложения, используя данные из ответа от API Tööukassa и обрабатывая возможные отсутствующие данные (например, если нет информации о компании, отображаем "Неизвестно", если нет информации о должности, отображаем "Без названия", если нет информации о зарплате, отображаем None)
+                    'company': detail.get("toopakkuja", {}).get("nimi", "Неизвестно"), # Название компании, которая предлагает вакансию, получаемое из поля 'toopakkuja' -> 'nimi' в ответе от API Tööukassa, если данных нет, возвращаем "Неизвестно" для отображения в интерфейсе приложения
+                    'too': detail.get('nimetus', 'Без названия'), # Название должности, получаемое из поля 'nimetus' в ответе от API Tööukassa, если данных нет, возвращаем "Без названия" для отображения в интерфейсе приложения
+                    'salary_from': detail.get("tookohaAndmed", {}).get("tootasuAlates"), # Зарплата от, получаемая из поля 'tookohaAndmed' -> 'tootasuAlates' в ответе от API Tööukassa, если данных нет, возвращаем None для отображения в интерфейсе приложения
+                    'salary_to': detail.get("tookohaAndmed", {}).get("tootasuKuni"), # Зарплата до, получаемая из поля 'tookohaAndmed' -> 'tootasuKuni' в ответе от API Tööukassa, если данных нет, возвращаем None для отображения в интерфейсе приложения
+                    'id': f"https://www.tootukassa.ee/et/toopakkumised/{item['id']}", # Ссылка на вакансию, формируемая на основе ID вакансии из ответа от API Tööukassa, если данных нет, возвращаем None для отображения в интерфейсе приложения
+                    'addresses': addr # Адрес работы, который мы получили из данных вакансии, если данных нет, возвращаем "Не указан" для отображения в интерфейсе приложения
+                })
 
-            detail = self.tookassaFull(job["id"]) #получаем полные данные о вакансии, используя функцию tookassaFull, которая принимает айди вакансии и возвращает подробную информацию о ней, такую как название работы, название компании, зарплата и адрес
-            if not detail: #если по какой-то причине не удалось получить полные данные о вакансии,
-                continue
-            addresses = detail.get("aadressid", []) #получаем список адресов из данных о вакансии, если ключ 'aadressid' отсутствует, возвращаем пустой список
-            adress=None
-            if addresses: #если список адресов не пустой, берем текст первого адреса из списка и сохраняем его в переменную adress, которая будет использоваться для вывода информации о городе, где находится работа
-                adress=addresses[0].get("aadressTekst")
-            if not any(item['company'] == detail.get("toopakkuja", {}).get("nimi") for item in spisok): #проверяем, есть ли уже в списке spisok вакансия от той же компании, что и текущая вакансия, которую мы обрабатываем. Если в списке spisok уже есть вакансия от той же компании, то мы не добавляем текущую вакансию в список spisok, чтобы избежать дублирования вакансий от одной и той же компании. Если в списке spisok нет вакансии от той же компании, то мы добавляем текущую вакансию в список spisok.
-                spisok.append({ #список
-                    'company':detail.get("toopakkuja", {}).get("nimi"), #название компании, которая предлагает работу, получаемое из данных о вакансии, используя ключ 'toopakkuja' для доступа к информации о компании и ключ 'nimi' для получения названия компании. Если ключ 'toopakkuja' или 'nimi' отсутствует, возвращаем пустую строку.
-                    'too':detail.get('nimetus',{}), #название работы, получаемое из данных о вакансии, используя ключ 'nimetus' для доступа к названию работы. Если ключ 'nimetus' отсутствует, возвращаем пустую строку.
-                    'salary_from':detail.get("tookohaAndmed", {}).get("tootasuAlates"), #начальная зарплата, получаемая из данных о вакансии, используя ключ 'tookohaAndmed' для доступа к информации о зарплате и ключ 'tootasuAlates' для получения начальной зарплаты. Если ключ 'tookohaAndmed' или 'tootasuAlates' отсутствует, возвращаем None.
-                    'salary_to':detail.get("tookohaAndmed", {}).get("tootasuKuni"), #конечная зарплата, получаемая из данных о вакансии, используя ключ 'tookohaAndmed' для доступа к информации о зарплате и ключ 'tootasuKuni' для получения конечной зарплаты. Если ключ 'tookohaAndmed' или 'tootasuKuni' отсутствует, возвращаем None.
-                    'id':f"https://www.tootukassa.ee/et/toopakkumised/{job['id']}", #ссылка на вакансию, формируемая с помощью айди вакансии, полученного из списка вакансий с сайта TööKassa, который мы обрабатываем в текущей итерации цикла. Мы используем f-строку для форматирования ссылки, вставляя айди вакансии в нужное место в URL.
-                    'addresses':adress, #адрес, который мы получили из данных о вакансии и сохранили в переменной adress, которая будет использоваться для вывода информации о городе, где находится работа. Если адрес не был найден, то значение будет None.
-                    'info':detail.get('toopakkuja',{}).get('tutvustus')
-                }
-                )
-    
-        for i in jobsC: #проходим по каждой вакансии в списке вакансий, полученных с сайта CV.ee
-    
-            spisok.append({ #добавляем каждую вакансию из списка вакансий с сайта CV.ee в список spisok, который содержит объединенные результаты вакансий с обоих сайтов. Мы добавляем каждую вакансию в список spisok в виде словаря, который содержит информацию о компании, названии работы, зарплате и ссылке на вакансию.
-                'company':i['company'], #название компании, которая предлагает работу, получаемое из данных о вакансии с сайта CV.ee, используя ключ 'company' для доступа к названию компании. Если ключ 'company' отсутствует, возвращаем пустую строку.
-                'too':i['too'], #название работы, получаемое из данных о вакансии с сайта CV.ee, используя ключ 'too' для доступа к названию работы. Если ключ 'too' отсутствует, возвращаем пустую строку.
-                'salary_from':i['salary_from'], #начальная зарплата, получаемая из данных о вакансии с сайта CV.ee, используя ключ 'salary_from' для доступа к начальной зарплате. Если ключ 'salary_from' отсутствует, возвращаем None.
-                'salary_to':i['salary_to'], #конечная зарплата, получаемая из данных о вакансии с сайта CV.ee, используя ключ 'salary_to' для доступа к конечной зарплате. Если ключ 'salary_to' отсутствует, возвращаем None.
-                'id':f"https://cv.ee/et/vacancy/{i['id']}", #ссылка на вакансию, формируемая с помощью айди вакансии, полученного из списка вакансий с сайта CV.ee, который мы обрабатываем в текущей итерации цикла. Мы используем f-строку для форматирования ссылки, вставляя айди вакансии в нужное место в URL.
-                'addresses':i['addresses'], #адрес, который мы получили из данных о вакансии с сайта CV.ee. Если адрес не был найден, то значение будет None.
-                'info':None
-            })
-        
-        for i in spisok:
-            print(f"Работа: {i['too']}   Фирма: {i['company']}  Город: {i['addresses']}  ЗП: {i['salary_from']}-{i['salary_to']} Ссылка: {i['id']}  Информация: {i['info']}" ) #выводим информацию о каждой вакансии из списка spisok в удобном формате, который включает название работы, название компании, город, где находится работа, диапазон зарплаты и ссылку на вакансию. Мы используем f-строку для форматирования вывода, вставляя соответствующие значения из каждого словаря вакансии в нужные места в строке вывода.
-        if spisok:
-            self.save_to_csv(spisok)
-            self.save_to_txt(spisok)
-    
-    def save_to_csv(self,jobs):
-        with open('jobs.csv', 'w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.DictWriter(f, fieldnames=jobs[0].keys())
-            writer.writeheader()
-            writer.writerows(jobs)
-    def save_to_txt(self,jobs):
-        with open('jobs.txt', 'w', encoding='utf-8') as f:
-            for j in jobs:
-                f.write(f"Töö: {j['too']} | Ettevõte: {j['company']} | linn: {j['addresses']} | palk: {j['salary_from']}-{j['salary_to']} | link: {j['id']}\n")
+        # Добавляем CV.ee
+        final_list.extend(self.CV(query))# Получаем список вакансий с CV.ee по заданному запросу и добавляем его к списку вакансий с Tööukassa, формируя единый список вакансий с информацией о компании, должности, зарплате и адресе работы для отображения в интерфейсе приложения
+        return final_list # Возвращаем объединенный список вакансий с Tööukassa и CV.ee по заданному запросу, который будет использоваться в интерфейсе приложения для отображения результатов поиска вакансий
 
-test = saits()
-test.get_job('kokk') #здесь можно изменить ключевое слово для поиска вакансий, например 'kokk' для поиска вакансий повара, 'programmeerija' для поиска вакансий программиста и т.д.
+class JobSearchApp(ctk.CTk): # Класс для создания графического интерфейса приложения с помощью библиотеки customtkinter, который позволяет пользователю вводить запрос для поиска вакансий, отображать результаты в виде таблицы и применять фильтры по зарплате и городу для удобного просмотра вакансий, а также открывать детали вакансии в новом окне при двойном клике на строку таблицы
+    def __init__(self, backend=None): # Инициализация приложения, установка параметров окна и создание интерфейса, а также связывание событий для обработки действий пользователя (например, двойной клик по строке таблицы для открытия деталей вакансии)
+        super().__init__() # Инициализация базового класса CTk для создания окна приложения
+        self.backend = backend # Сохранение экземпляра бэкенда (класса saits) для получения данных о вакансиях при поиске, который будет использоваться в методе _fetch для получения списка вакансий по заданному запросу и отображения их в интерфейсе приложения
+        self.all_jobs = [] # Список для хранения всех вакансий, полученных с бэкенда, который будет использоваться для отображения в таблице и применения фильтров по зарплате и городу для удобного просмотра вакансий в интерфейсе приложения
+        self.title("Job Search Estonia") # Установка заголовка окна приложения для отображения пользователю, что это приложение для поиска вакансий в Эстонии
+        self.geometry("1100x700") # Установка размера окна приложения для удобного отображения всех элементов интерфейса, таких как поле для ввода запроса, кнопки, таблица с результатами и фильтры
+       
+        ctk.set_appearance_mode("dark") # Установка темного режима для интерфейса приложения, который будет использоваться для всех элементов интерфейса, чтобы обеспечить современный и приятный внешний вид приложения
+        ctk.set_default_color_theme("green") # Установка зеленой цветовой темы для интерфейса приложения, которая будет использоваться для всех элементов интерфейса, чтобы обеспечить современный и приятный внешний вид приложения
+        self._build_ui()# Вызов метода для создания интерфейса приложения, который включает в себя поле для ввода запроса, кнопки для поиска и фильтрации, таблицу для отображения результатов и другие элементы интерфейса для удобного взаимодействия пользователя с приложением
+       
+
+        self.tree.bind("<Double-1>", self._on_double_click)# Связывание события двойного клика по строке таблицы с методом _on_double_click, который будет открывать новое окно с деталями вакансии, позволяя пользователю выделить и скопировать ссылку на вакансию для удобного доступа к ней в будущем
+
+    def _build_ui(self): # Метод для создания интерфейса приложения, который включает в себя поле для ввода запроса, кнопки для поиска и фильтрации, таблицу для отображения результатов и другие элементы интерфейса для удобного взаимодействия пользователя с приложением
+        self.grid_columnconfigure(0, weight=1) # Настройка сетки для размещения элементов интерфейса, чтобы они занимали все доступное пространство и были адаптивными при изменении размера окна приложения
+        self.grid_rowconfigure(2, weight=1) # Настройка сетки для размещения элементов интерфейса, чтобы они занимали все доступное пространство и были адаптивными при изменении размера окна приложения
+
+        top = ctk.CTkFrame(self, height=80)# Создание верхней панели для размещения поля для ввода запроса и кнопки поиска, которая будет использоваться для удобного взаимодействия пользователя с приложением при поиске вакансий по заданному запросу
+        top.grid(row=0, column=0, sticky="ew", padx=10, pady=10)# Размещение верхней панели в сетке приложения, чтобы она занимала всю ширину окна и была адаптивной при изменении размера окна приложения, а также добавление отступов для удобного отображения элементов интерфейса на панели
+       
+        self.search_var = ctk.StringVar() # Создание переменной для хранения текста из поля для ввода запроса, которая будет использоваться для получения значения запроса при нажатии на кнопку поиска и передачи его в метод _fetch для получения списка вакансий по заданному запросу
+        self.search_entry = ctk.CTkEntry(top, textvariable=self.search_var, placeholder_text="Должность...", width=400) # Создание поля для ввода запроса, которое будет размещено на верхней панели и использоваться для ввода пользователем ключевых слов для поиска вакансий, а также отображать подсказку "Должность..." для удобства использования приложения
+        self.search_entry.pack(side="left", padx=20, pady=20) # Размещение поля для ввода запроса на верхней панели, чтобы оно было удобно доступно для пользователя при поиске вакансий по заданному запросу, а также добавление отступов для удобного отображения элемента интерфейса на панели
+       
+        self.search_btn = ctk.CTkButton(top, text="Найти", command=self._start_search) # Создание кнопки для запуска поиска вакансий, которая будет размещена на верхней панели и использоваться для запуска метода _start_search при нажатии, который будет получать значение запроса из поля для ввода и передавать его в метод _fetch для получения списка вакансий по заданному запросу
+        self.search_btn.pack(side="left", padx=10) # Размещение кнопки для запуска поиска вакансий на верхней панели, чтобы она была удобно доступна для пользователя при поиске вакансий по заданному запросу, а также добавление отступов для удобного отображения элемента интерфейса на панели
+
+        # 2. Панель фильтров
+        filter_bar = ctk.CTkFrame(self) # Создание панели для размещения элементов управления фильтрами, которая будет использоваться для удобного взаимодействия пользователя с приложением при применении фильтров по зарплате и городу для отображения только тех вакансий, которые соответствуют заданным критериям
+        filter_bar.grid(row=1, column=0, sticky="ew", padx=10) # Размещение панели для размещения элементов управления фильтрами в сетке приложения, чтобы она занимала всю ширину окна и была адаптивной при изменении размера окна приложения, а также добавление отступов для удобного отображения элемента интерфейса на панели
+       
+        self.salary_from_var = ctk.StringVar() # Создание переменной для хранения значения из поля для ввода минимальной зарплаты, которая будет использоваться для получения значения фильтра по зарплате при нажатии на кнопку фильтрации и применения его к списку вакансий для отображения только тех вакансий, которые соответствуют заданному критерию минимальной зарплаты
+        ctk.CTkLabel(filter_bar, text="ЗП от:").pack(side="left", padx=5) # Создание метки для поля ввода минимальной зарплаты, которая будет размещена на панели фильтров и использоваться для обозначения поля ввода минимальной зарплаты для удобного взаимодействия пользователя с приложением при применении фильтра по зарплате
+        ctk.CTkEntry(filter_bar, textvariable=self.salary_from_var, width=80).pack(side="left", padx=5) # Создание поля для ввода минимальной зарплаты, которое будет размещено на панели фильтров и использоваться для ввода пользователем значения минимальной зарплаты для применения фильтра по зарплате, а также добавление отступов для удобного отображения элемента интерфейса на панели
+       
+        self.city_var = ctk.StringVar() # Создание переменной для хранения значения из поля для ввода города, которая будет использоваться для получения значения фильтра по городу при нажатии на кнопку фильтрации и применения его к списку вакансий для отображения только тех вакансий, которые соответствуют заданному критерию города
+        ctk.CTkLabel(filter_bar, text="Город:").pack(side="left", padx=5) # Создание метки для поля ввода города, которая будет размещена на панели фильтров и использоваться для обозначения поля ввода города для удобного взаимодействия пользователя с приложением при применении фильтра по городу
+        ctk.CTkEntry(filter_bar, textvariable=self.city_var, width=120).pack(side="left", padx=5) # Создание поля для ввода города, которое будет размещено на панели фильтров и использоваться для ввода пользователем значения города для применения фильтра по городу, а также добавление отступов для удобного отображения элемента интерфейса на панели
+       
+        ctk.CTkButton(filter_bar, text="Фильтр", width=100, command=self._apply_filters).pack(side="left", padx=20) # Создание кнопки для применения фильтров, которая будет размещена на панели фильтров и использоваться для запуска метода _apply_filters при нажатии, который будет получать значения из полей для ввода минимальной зарплаты и города, применять эти значения в качестве фильтров к списку вакансий и обновлять отображение таблицы с результатами для отображения только тех вакансий, которые соответствуют заданным критериям фильтрации
+
+        # 3. Таблица
+        t_frame = ctk.CTkFrame(self) # Создание фрейма для размещения таблицы с результатами поиска вакансий, который будет использоваться для удобного отображения списка вакансий в виде таблицы с возможностью прокрутки и адаптивного изменения размера при изменении размера окна приложения
+        t_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=10) # Размещение фрейма для размещения таблицы с результатами поиска вакансий в сетке приложения, чтобы он занимал все доступное пространство и был адаптивным при изменении размера окна приложения, а также добавление отступов для удобного отображения элемента интерфейса на панели
+       
+        cols = ("too", "company", "city", "salary", "link") # Определение столбцов для таблицы с результатами поиска вакансий, которые будут отображать информацию о должности, компании, городе, зарплате и ссылке на вакансию для удобного просмотра пользователем
+        self.tree = ttk.Treeview(t_frame, columns=cols, show="headings")# Создание виджета Treeview для отображения таблицы с результатами поиска вакансий, который будет размещен внутри фрейма и использоваться для отображения списка вакансий в виде таблицы с возможностью прокрутки и адаптивного изменения размера при изменении размера окна приложения
+        for col in cols: self.tree.heading(col, text=col.capitalize()) # Установка заголовков для каждого столбца в таблице с результатами поиска вакансий, чтобы пользователь мог легко понять, какую информацию отображает каждый столбец для удобного просмотра вакансий
+        self.tree.pack(expand=True, fill="both") # Размещение виджета Treeview для отображения таблицы с результатами поиска вакансий внутри фрейма, чтобы он занимал все доступное пространство и был адаптивным при изменении размера окна приложения, а также обеспечивал удобное отображение списка вакансий в виде таблицы для пользователя
+
+        # Подсказка для пользователя
+        ctk.CTkLabel(self, text="* Дважды кликните по вакансии, чтобы открыть и скопировать ссылку", text_color="gray").grid(row=3, column=0, pady=5)# Создание метки с подсказкой для пользователя, которая будет размещена под таблицей с результатами поиска вакансий и использоваться для информирования пользователя о том, что он может дважды кликнуть по строке таблицы, чтобы открыть новое окно с деталями вакансии и скопировать ссылку на вакансию для удобного доступа к ней в будущем
+
+    def _on_double_click(self, event): # Метод для обработки события двойного клика по строке таблицы с результатами поиска вакансий, который будет открывать новое окно с деталями вакансии, позволяя пользователю выделить и скопировать ссылку на вакансию для удобного доступа к ней в будущем
+        """Открывает новое окно с данными, которые можно выделить"""
+        item = self.tree.selection() # Получаем выбранный элемент (строку) из таблицы, по которой был произведен двойной клик, чтобы извлечь из нее данные о вакансии для отображения в новом окне с деталями вакансии
+        if not item: return # Если элемент не выбран (например, пользователь кликнул по пустой области таблицы), просто возвращаемся из метода, чтобы избежать ошибок при попытке доступа к несуществующим данным и обеспечить стабильную работу приложения
+       
+        values = self.tree.item(item[0], "values") # Получаем значения из выбранной строки таблицы, которые содержат информацию о вакансии (должность, компания, город, зарплата и ссылка), чтобы использовать эти данные для отображения в новом окне с деталями вакансии и позволить пользователю выделить и скопировать ссылку на вакансию для удобного доступа к ней в будущем
+       
+        # Создаем маленькое всплывающее окно
+        pop = ctk.CTkToplevel(self)
+        pop.title("Детали вакансии")
+        pop.geometry("600x200")
+        pop.attributes("-topmost", True) # Окно всегда сверху
+
+        ctk.CTkLabel(pop, text="Вы можете выделить и скопировать ссылку ниже:", font=("Arial", 12, "bold")).pack(pady=10) # Создаем метку с инструкцией для пользователя, которая будет размещена в новом окне с деталями вакансии и использоваться для информирования пользователя о том, что он может выделить и скопировать ссылку на вакансию, которая будет отображаться ниже, для удобного доступа к ней в будущем
+       
+        # Используем CTkTextbox — он позволяет выделять текст мышкой!
+        txt = ctk.CTkTextbox(pop, height=100, width=550)
+        txt.pack(padx=20, pady=10)
+       
+        # Формируем текст для копирования
+        info = f"Должность: {values[0]}\nКомпания: {values[1]}\nСсылка: {values[4]}"
+        txt.insert("0.0", info)
+        txt.configure(state="disabled") # Только чтение, но выделение работает
+
+    def _start_search(self): # Метод для запуска процесса поиска вакансий по заданному запросу, который будет получать значение запроса из поля для ввода, отключать кнопку поиска для предотвращения повторных нажатий во время выполнения поиска и запускать новый поток для получения данных о вакансиях с бэкенда, чтобы не блокировать интерфейс приложения и обеспечить плавную работу приложения при поиске вакансий
+        query = self.search_var.get() # Получаем значение запроса из поля для ввода, которое будет использоваться для поиска вакансий по заданному запросу, и если запрос пустой, просто возвращаемся из метода, чтобы избежать выполнения поиска с пустым запросом и обеспечить стабильную работу приложения
+        if not query: return # Если запрос пустой, просто возвращаемся из метода, чтобы избежать выполнения поиска с пустым запросом и обеспечить стабильную работу приложения
+        self.search_btn.configure(state="disabled") # Отключаем кнопку поиска, чтобы предотвратить повторные нажатия во время выполнения поиска, и обеспечиваем визуальную обратную связь для пользователя о том, что поиск выполняется, а также предотвращаем возможные ошибки при попытке запустить несколько поисков одновременно
+        threading.Thread(target=self._fetch, args=(query,), daemon=True).start() # Запускаем новый поток для получения данных о вакансиях с бэкенда, чтобы не блокировать интерфейс приложения и обеспечить плавную работу приложения при поиске вакансий, передавая значение запроса в метод _fetch для получения списка вакансий по заданному запросу и отображения их в интерфейсе приложения
+
+    def _fetch(self, query): # Метод для получения данных о вакансиях с бэкенда по заданному запросу, который будет выполняться в отдельном потоке, чтобы не блокировать интерфейс приложения, и после получения данных будет вызывать метод _on_done для обновления интерфейса и отображения полученных вакансий в таблице
+        if self.backend: # Если экземпляр бэкенда (класса saits) был передан при инициализации приложения, используем его для получения данных о вакансиях по заданному запросу, вызывая метод get_job_list, который объединяет данные из Tööukassa и CV.ee, и сохраняем полученный список вакансий в атрибуте all_jobs для дальнейшей обработки и отображения в интерфейсе приложения
+            # Получаем список из бэкенда (saits)
+            self.all_jobs = self.backend.get_job_list(query) # Получаем список вакансий по заданному запросу, который объединяет данные из Tööukassa и CV.ee, и сохраняем его в атрибуте all_jobs для дальнейшей обработки и отображения в интерфейсе приложения
+        self.after(0, self._on_done)  # После получения данных о вакансиях вызываем метод _on_done для обновления интерфейса и отображения полученных вакансий в таблице, используя метод after для выполнения этого действия в главном потоке приложения, чтобы обеспечить стабильную работу приложения и корректное обновление интерфейса после получения данных о вакансиях
+
+    def _on_done(self): # Метод для обработки завершения получения данных о вакансиях, который будет обновлять интерфейс приложения, отображая полученные вакансии в таблице и снова активируя кнопку поиска для возможности выполнения нового поиска, обеспечивая удобное взаимодействие пользователя с приложением после получения данных о вакансиях
+        self.search_btn.configure(state="normal")
+        self._apply_filters()
+
+    def _apply_filters(self): # Метод для применения фильтров по зарплате и городу к списку вакансий, который будет вызываться при нажатии на кнопку фильтрации и обновлять отображение таблицы с результатами для отображения только тех вакансий, которые соответствуют заданным критериям фильтрации, обеспечивая удобное взаимодействие пользователя с приложением при просмотре вакансий по заданным критериям
+        self.tree.delete(*self.tree.get_children())
+        city_f = self.city_var.get().lower()
+        sal_f = int(self.salary_from_var.get()) if self.salary_from_var.get().isdigit() else 0
+
+        for j in self.all_jobs: # Проходим по каждому элементу в списке всех вакансий, который был получен с бэкенда и сохранен в атрибуте all_jobs, и для каждой вакансии проверяем, соответствует ли она заданным критериям фильтрации по городу и минимальной зарплате, чтобы отображать только те вакансии, которые соответствуют этим критериям в таблице с результатами поиска вакансий
+            addr = (j.get('addresses') or "").lower()
+            sal_to = j.get('salary_to') or j.get('salary_from') or 0
+           
+            if city_f in addr and (not sal_f or (sal_to and sal_to >= sal_f)): # Проверяем, соответствует ли город вакансии заданному фильтру по городу (если фильтр не пустой) и соответствует ли минимальная зарплата вакансии заданному фильтру по зарплате (если фильтр не пустой), чтобы отображать только те вакансии, которые соответствуют этим критериям в таблице с результатами поиска вакансий
+                salary_str = f"{j.get('salary_from') or 0} - {j.get('salary_to') or ''}"
+                self.tree.insert("", "end", values=(j['too'], j['company'], j['addresses'], salary_str, j['id']))
+
+if __name__ == "__main__": # Точка входа в приложение, которая будет создавать экземпляр бэкенда (класса saits), передавать его в экземпляр приложения (класса JobSearchApp) и запускать главный цикл приложения для отображения интерфейса и взаимодействия с пользователем при поиске вакансий по заданному запросу
+    backend_instance = saits()
+    app = JobSearchApp(backend=backend_instance)
+    app.mainloop()
