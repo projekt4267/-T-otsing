@@ -4,7 +4,7 @@ Job finder
 Osalejate nimed:
 Demjan Kipriyanov
 Vseslav Golenduhhin
-Aleksei Za Stalina
+Aleksei Zassimovits
 
 Projekti idee:
 Tööpakkumiste otsimine erinevatelt veebilehtedelt
