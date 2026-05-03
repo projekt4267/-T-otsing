@@ -6,6 +6,7 @@ Projekti idee: Tööpakkumiste otsimine erinevatelt veebilehtedelt
 
 Lühikirjeldus: Meie programm võimaldab otsida tööpakkumisi erinevatelt veebilehtedelt. Programm kuvab töö nimetuse, asukoha, lingi tööpakkumisele ning lisainfo.
 
+Github https://github.com/projekt4267/-T-otsing
 Kuvatav info:
 Ametikoht
 Ettevõte
