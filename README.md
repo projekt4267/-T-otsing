@@ -27,3 +27,4 @@ Vajadusel kasuta filtreid
 Topeltklõps — ava tööpakkumine
 
 customtkinter, requests, pillow teegid, mida tuleb alla laadida
+pip install customtkinter, requests, pillow
